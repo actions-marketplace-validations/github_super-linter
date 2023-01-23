@@ -156,7 +156,7 @@ jobs:
 
       - name: Start the deployment for the ${{ matrix.images.deployment-environment-identifier }} environment
         if: ${{ github.repository == 'github/super-linter' && github.ref == 'refs/heads/main' }}
-        uses: bobheadxi/deployments@v1.3.0
+        uses: bobheadxi/deployments@v1.4.0
         id: deployment
         with:
           step: start
@@ -182,7 +182,7 @@ jobs:
 
       - name: Update the deployment status for the ${{ matrix.images.deployment-environment-identifier }} environment
         if: ${{ github.repository == 'github/super-linter' && github.ref == 'refs/heads/main' }}
-        uses: bobheadxi/deployments@v1.3.0
+        uses: bobheadxi/deployments@v1.4.0
         with:
           step: finish
           token: ${{ secrets.GITHUB_TOKEN }}
