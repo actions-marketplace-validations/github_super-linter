@@ -4,21 +4,9 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-# shellcheck disable=SC2034
-CREATE_LOG_FILE=false
 # Default log level
 # shellcheck disable=SC2034
 LOG_LEVEL="DEBUG"
-# shellcheck disable=SC2034
-LOG_DEBUG="true"
-# shellcheck disable=SC2034
-LOG_VERBOSE="true"
-# shellcheck disable=SC2034
-LOG_NOTICE="true"
-# shellcheck disable=SC2034
-LOG_WARN="true"
-# shellcheck disable=SC2034
-LOG_ERROR="true"
 
 # shellcheck source=/dev/null
 source "lib/functions/log.sh"
@@ -29,6 +17,10 @@ source "lib/functions/validation.sh"
 source "lib/functions/githubEvent.sh"
 
 function GetGithubPushEventCommitCountTest() {
+  local FUNCTION_NAME
+  FUNCTION_NAME="${FUNCNAME[0]}"
+  info "${FUNCTION_NAME} start"
+
   local GITHUB_EVENT_COMMIT_COUNT
   GITHUB_EVENT_COMMIT_COUNT=$(GetGithubPushEventCommitCount "test/data/github-event/github-event-push.json")
 
@@ -38,13 +30,16 @@ function GetGithubPushEventCommitCountTest() {
     fatal "GITHUB_EVENT_COMMIT_COUNT is not equal to 1: ${GITHUB_EVENT_COMMIT_COUNT}"
   fi
 
-  FUNCTION_NAME="${FUNCNAME[0]}"
   notice "${FUNCTION_NAME} PASS"
 }
 
 GetGithubPushEventCommitCountTest
 
 function GetGithubRepositoryDefaultBranchTest() {
+  local FUNCTION_NAME
+  FUNCTION_NAME="${FUNCNAME[0]}"
+  info "${FUNCTION_NAME} start"
+
   local GITHUB_REPOSITORY_DEFAULT_BRANCH
   GITHUB_REPOSITORY_DEFAULT_BRANCH=$(GetGithubRepositoryDefaultBranch "test/data/github-event/github-event-push.json")
 
@@ -57,7 +52,6 @@ function GetGithubRepositoryDefaultBranchTest() {
     fatal "GITHUB_REPOSITORY_DEFAULT_BRANCH (${GITHUB_REPOSITORY_DEFAULT_BRANCH}) is not equal to: ${EXPECTED_GITHUB_REPOSITORY_DEFAULT_BRANCH}"
   fi
 
-  FUNCTION_NAME="${FUNCNAME[0]}"
   notice "${FUNCTION_NAME} PASS"
 }
 

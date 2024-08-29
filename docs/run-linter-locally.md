@@ -25,15 +25,26 @@ Notes:
 - To run against a single file you can use: `docker run -e RUN_LOCAL=true -e USE_FIND_ALGORITHM=true -v /path/to/local/codebase/file:/tmp/lint/file ghcr.io/super-linter/super-linter`
 - You need to pass the `RUN_LOCAL` option to bypass some of the GitHub Actions checks, as well as the mapping of your local codebase to `/tmp/lint`.
 - If you want to override the `/tmp/lint` folder, you can set the `DEFAULT_WORKSPACE` environment variable to point to the folder you'd prefer to scan.
-- You can add as many configuration options as needed. Configuration options are documented in the [README](../README.md#configure-super-linter).
-
-### Azure
-
-Check out this [article](https://blog.tyang.org/2020/06/27/use-github-super-linter-in-azure-pipelines/)
+- You can add as many configuration options as needed. Configuration options are documented in the [readme](../README.md#configure-super-linter).
 
 ### GitLab
 
-Check out this [snippet](https://gitlab.com/snippets/1988376) and this Guided Exploration: [GitLab CI CD Extension for Super-Linter](https://gitlab.com/guided-explorations/ci-cd-plugin-extensions/ci-cd-plugin-extension-github-action-super-linter)
+To run Super-linter in your GitLab CI/CD pipeline, You can use the following
+snippet:
+
+```yaml
+super-linter:
+  # More info at https://github.com/super-linter/super-linter
+  stage: Super-linter
+  # Use a specific Super-linter version instead of latest for more reproducible builds
+  image: super-linter/super-linter:latest
+  script: ["true"]
+  variables:
+    RUN_LOCAL: "true"
+    DEFAULT_WORKSPACE: $CI_PROJECT_DIR
+```
+
+Note that this is a high-level example that you should customize for your needs.
 
 ### Run on Codespaces and Visual Studio Code
 
@@ -47,51 +58,54 @@ them accordingly:
 
 1. Create a configuration file for super-linter `super-linter.env`. For example:
 
-    ```bash
-    VALIDATE_ALL_CODEBASE=true
-    ```
+   ```bash
+   VALIDATE_ALL_CODEBASE=true
+   ```
 
 1. Load the super-linter configuration file when running outside GitHub Actions:
 
-    ```bash
-    docker run --rm \
-        -e RUN_LOCAL=true \
-        --env-file ".github/super-linter.env" \
-        -v "$(pwd)":/tmp/lint \
-        ghcr.io/super-linter/super-linter:latest
-    ```
+   ```bash
+   docker run --rm \
+       -e RUN_LOCAL=true \
+       --env-file ".github/super-linter.env" \
+       -v "$(pwd)":/tmp/lint \
+       ghcr.io/super-linter/super-linter:latest
+   ```
 
 1. Load the super-linter configuration file when running in GitHub Actions by
-  adding the following step to the GitHub Actions workflow that runs
-  super-linter, after checking out your repository and before running
-  super-linter:
+   adding the following step to the GitHub Actions workflow that runs
+   super-linter, after checking out your repository and before running
+   super-linter:
 
-    ```yaml
-    - name: Load super-linter configuration
-      run: cat .github/super-linter.env >> "$GITHUB_ENV"
-    ```
+   ```yaml
+   - name: Load super-linter configuration
+     run: cat .github/super-linter.env >> "$GITHUB_ENV"
+   ```
 
 ## Build the container image and run the test suite locally
 
-To run the build and test process locally, do the following:
+To run the build and test process locally, in the top-level super-linter
+directory, do the following:
 
 1. [Create a fine-grained GitHub personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token).
-1. Create a file to store the personal access token on your machine:
+   The token only needs to have public/read-only access.
 
-    ```bash
-    touch .github-personal-access-token
-    ```
+1. Store the generated personal access token in a file in the top-level
+   directory (This file is ignored by Git).
 
-    The file to store the personal access token is ignored by Git.
+   ```bash
+   echo "github_pat_XXXXXX_XXXXXX" > .github-personal-access-token
+   ```
 
 1. Run the build process:
 
-    ```bash
-    make
-    ```
+   ```bash
+   . ./scripts/build-metadata.sh && make
+   ```
 
-To avoid invalidating the build cache, and reuse it, you can set build metadata
-to arbitrary values before running `make`:
+To avoid invalidating the build cache because of changing values of build
+arguments, you can set build arguments to arbitrary values before running
+`make`, instead of sourcing `scripts/build-metadata.sh`:
 
 ```bash
 BUILD_DATE=2023-12-12T09:32:05Z \
@@ -125,4 +139,13 @@ To get the list of the available `Make` targets, run the following command:
 
 ```shell
 make help
+```
+
+### Automatically fix formatting and linting issues
+
+To automatically fix linting and formatting issues when supported, run the
+following command:
+
+```shell
+make fix-codebase
 ```

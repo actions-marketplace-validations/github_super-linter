@@ -18,7 +18,14 @@ control "super-linter-environment-variables" do
     its("content") { should match(/^(standard|slim)$/) }
   end
 
+  describe os_env("RENOVATE_X_IGNORE_RE2") do
+    its("content") { should eq "true" }
+  end
+
   if (image == "standard")
+    describe os_env("DOTNET_CLI_TELEMETRY_OPTOUT") do
+      its("content") { should eq "1" }
+    end
     describe os_env("POWERSHELL_TELEMETRY_OPTOUT") do
       its("content") { should eq "1" }
     end
@@ -51,17 +58,17 @@ control "super-linter-installed-packages" do
     "openssh-client",
     "parallel",
     "perl",
-    "php82",
-    "php82-ctype",
-    "php82-curl",
-    "php82-dom",
-    "php82-iconv",
-    "php82-mbstring",
-    "php82-openssl",
-    "php82-phar",
-    "php82-simplexml",
-    "php82-tokenizer",
-    "php82-xmlwriter",
+    "php83",
+    "php83-ctype",
+    "php83-curl",
+    "php83-dom",
+    "php83-iconv",
+    "php83-mbstring",
+    "php83-openssl",
+    "php83-phar",
+    "php83-simplexml",
+    "php83-tokenizer",
+    "php83-xmlwriter",
     "R",
     "rakudo",
     "ruby",
@@ -143,7 +150,7 @@ control "super-linter-installed-commands" do
     { linter_name: "checkstyle", version_command: "java -jar /usr/bin/checkstyle --version"},
     { linter_name: "chktex"},
     { linter_name: "clang-format"},
-    { linter_name: "clippy", linter_command: "clippy", version_command: "cargo-clippy --version"},
+    { linter_name: "clippy", linter_command: "cargo clippy"},
     { linter_name: "clj-kondo"},
     { linter_name: "coffeelint"},
     { linter_name: "composer"},
@@ -160,10 +167,12 @@ control "super-linter-installed-commands" do
     { linter_name: "goreleaser"},
     { linter_name: "google-java-format", version_command: "java -jar /usr/bin/google-java-format --version"},
     { linter_name: "hadolint"},
+    { linter_name: "helm", version_option: "version"}, # not used as linter, needed for checkov's helm framework
     { linter_name: "htmlhint"},
     { linter_name: "isort"},
     { linter_name: "jscpd"},
     { linter_name: "ktlint"},
+    { linter_name: "kustomize", version_option: "version"}, # not used as linter, needed for checkov's kustomize checks
     { linter_name: "kubeconform", version_option: "-v"},
     { linter_name: "lua", version_option: "-v"},
     { linter_name: "markdownlint"},
@@ -177,6 +186,7 @@ control "super-linter-installed-commands" do
     { linter_name: "protolint", version_option: "version"},
     { linter_name: "psalm"},
     { linter_name: "pwsh"},
+    { linter_name: "pyink"},
     { linter_name: "pylint"},
     { linter_name: "R", version_command: "R --slave -e \"r_ver <- R.Version()\\$version.string; \
             lintr_ver <- packageVersion('lintr'); \
@@ -192,7 +202,6 @@ control "super-linter-installed-commands" do
     { linter_name: "snakefmt"},
     { linter_name: "snakemake"},
     { linter_name: "spectral"},
-    { linter_name: "sql-lint"},
     { linter_name: "sqlfluff"},
     { linter_name: "standard"},
     { linter_name: "stylelint"},
@@ -212,7 +221,6 @@ control "super-linter-installed-commands" do
     arm-ttk
     clippy
     dotnet
-    dotenv-linter
     pwsh
     rustfmt
   )
@@ -290,13 +298,16 @@ control "super-linter-installed-ruby-gems" do
   desc "Check that Ruby gems that Super-Linter needs are installed."
 
   gems = [
-    "rubocop",
+    "rubocop-capybara",
+    "rubocop-factory_bot",
     "rubocop-github",
     "rubocop-minitest",
     "rubocop-performance",
     "rubocop-rails",
     "rubocop-rake",
+    "rubocop-rspec_rails",
     "rubocop-rspec",
+    "rubocop",
     "standard"
   ]
 
@@ -355,7 +366,6 @@ control "super-linter-installed-npm-packages" do
     "react-redux",
     "react-router-dom",
     "renovate",
-    "sql-lint",
     "standard",
     "stylelint",
     "stylelint-config-recommended-scss",
@@ -396,6 +406,7 @@ control "super-linter-installed-pypi-packages" do
     "flake8",
     "isort",
     "mypy",
+    "pyink",
     "pylint",
     "ruff",
     "snakefmt",
@@ -465,10 +476,14 @@ control "super-linter-validate-files" do
     "/action/lib/functions/linterRules.sh",
     version_file_path,
     "/action/lib/functions/log.sh",
+    "/action/lib/functions/output.sh",
     "/action/lib/functions/possum.sh",
     "/action/lib/functions/updateSSL.sh",
     "/action/lib/functions/validation.sh",
     "/action/lib/functions/worker.sh",
+    "/action/lib/globals/languages.sh",
+    "/action/lib/globals/linterCommandsOptions.sh",
+    "/action/lib/globals/linterRules.sh",
     "/action/lib/.automation/actionlint.yml",
     "/action/lib/.automation/.ansible-lint.yml",
     "/action/lib/.automation/.arm-ttk.psd1",
@@ -498,18 +513,21 @@ control "super-linter-validate-files" do
     "/action/lib/.automation/.protolintrc.yml",
     "/action/lib/.automation/.python-black",
     "/action/lib/.automation/.python-lint",
+    "/action/lib/.automation/.python-pyink",
     "/action/lib/.automation/.ruby-lint.yml",
     "/action/lib/.automation/.ruff.toml",
     "/action/lib/.automation/.scalafmt.conf",
+    "/action/lib/.automation/.shellcheckrc",
     "/action/lib/.automation/.snakefmt.toml",
-    "/action/lib/.automation/.sql-config.json",
     "/action/lib/.automation/.sqlfluff",
     "/action/lib/.automation/.stylelintrc.json",
     "/action/lib/.automation/.tflint.hcl",
     "/action/lib/.automation/.yaml-lint.yml",
     "/action/lib/.automation/phpcs.xml",
     "/action/lib/.automation/phpstan.neon",
-    "/action/lib/.automation/psalm.xml"
+    "/action/lib/.automation/psalm.xml",
+    "/usr/bin/helm", # needed for checkov's helm framework
+    "/usr/bin/kustomize", # needed for checkov's kustomize checks
   ]
 
   files.each do |item|

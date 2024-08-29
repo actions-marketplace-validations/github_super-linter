@@ -10,6 +10,10 @@
     "**/test/linters/cloudformation",
     "**/test/linters/coffeescript",
     "**/test/linters/css",
+    "**/test/linters/css_prettier",
+    "**/test/linters/dotnet_sln_format_analyzers",
+    "**/test/linters/dotnet_sln_format_style",
+    "**/test/linters/dotnet_sln_format_whitespace",
     "**/test/linters/html",
     "**/test/linters/javascript_es",
     "**/test/linters/javascript_prettier",
@@ -26,6 +30,7 @@
     "**/test/linters/python_flake8",
     "**/test/linters/python_isort",
     "**/test/linters/python_mypy",
+    "**/test/linters/python_pyink",
     "**/test/linters/python_pylint",
     "**/test/linters/python_ruff",
     "**/test/linters/r",
@@ -36,11 +41,13 @@
     "**/test/linters/scalafmt",
     "**/test/linters/tekton/**",
     "**/test/linters/typescript_es/**",
+    "**/test/linters/typescript_prettier/**",
+    "**/test/linters/typescript_standard/**",
+    "**/test/linters-config/**",
     "**/github_conf/**",
-    "**/workflows/cd.yml"
+    "**/workflows/cd.yml",
+    "**/workflows/ci.yml"
   ],
-  "reporters": [
-    "consoleFull"
-  ],
+  "reporters": ["consoleFull"],
   "threshold": 0
 }

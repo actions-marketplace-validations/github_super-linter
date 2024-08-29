@@ -4,26 +4,13 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-# shellcheck disable=SC2034
-CREATE_LOG_FILE=false
 # Default log level
 # shellcheck disable=SC2034
 LOG_LEVEL="DEBUG"
-# shellcheck disable=SC2034
-LOG_DEBUG="true"
-# shellcheck disable=SC2034
-LOG_VERBOSE="true"
-# shellcheck disable=SC2034
-LOG_NOTICE="true"
-# shellcheck disable=SC2034
-LOG_WARN="true"
-# shellcheck disable=SC2034
-LOG_ERROR="true"
 
 # shellcheck source=/dev/null
 source "lib/functions/log.sh"
 
-# shellcheck disable=SC2034
 DEFAULT_BRANCH=main
 
 git config --global init.defaultBranch "${DEFAULT_BRANCH}"
@@ -65,7 +52,7 @@ function GenerateFileDiffOneFileTest() {
   GITHUB_WORKSPACE="$(mktemp -d)"
   # shellcheck disable=SC2064 # Once the path is set, we don't expect it to change
   trap "rm -fr '${GITHUB_WORKSPACE}'" EXIT
-  echo "GITHUB_WORKSPACE: ${GITHUB_WORKSPACE}"
+  debug "GITHUB_WORKSPACE: ${GITHUB_WORKSPACE}"
 
   local FILES_TO_COMMIT="${FILES_TO_COMMIT:-1}"
   local COMMIT_FILE_INITIAL_COMMIT="${COMMIT_FILE_INITIAL_COMMIT:-"false"}"
@@ -133,8 +120,52 @@ function GenerateFileDiffTwoFilesPushEventTest() {
   GenerateFileDiffTwoFilesTest "${FUNCNAME[0]}"
 }
 
+function BuildFileArraysAnsibleGitHubWorkspaceTest() {
+  local FUNCTION_NAME
+  FUNCTION_NAME="${FUNCNAME[0]}"
+  info "${FUNCTION_NAME} start"
+
+  # shellcheck source=/dev/null
+  source /action/lib/functions/detectFiles.sh
+  # shellcheck source=/dev/null
+  source /action/lib/functions/validation.sh
+
+  # shellcheck disable=SC2034
+  local FILTER_REGEX_INCLUDE=""
+  # shellcheck disable=SC2034
+  local FILTER_REGEX_EXCLUDE=""
+  # shellcheck disable=SC2034
+  local TEST_CASE_RUN=false
+  # shellcheck disable=SC2034
+  local IGNORE_GENERATED_FILES=false
+  local FILE_ARRAYS_DIRECTORY_PATH="/tmp/super-linter-output/super-linter-file-arrays"
+  mkdir -p "${FILE_ARRAYS_DIRECTORY_PATH}"
+
+  # shellcheck disable=SC2034
+  CHECKOV_LINTER_RULES="$(mktemp)"
+
+  GITHUB_WORKSPACE="/tmp/lint"
+  # shellcheck disable=SC2034
+  ANSIBLE_DIRECTORY="${GITHUB_WORKSPACE}"
+
+  BuildFileArrays "${GITHUB_WORKSPACE}"
+
+  local FILE_ARRAY_ANSIBLE_PATH="${FILE_ARRAYS_DIRECTORY_PATH}/file-array-ANSIBLE"
+  if [[ ! -e "${FILE_ARRAY_ANSIBLE_PATH}" ]]; then
+    fatal "${FILE_ARRAY_ANSIBLE_PATH} doesn't exist"
+  fi
+
+  if ! grep -qxF "${ANSIBLE_DIRECTORY}" "${FILE_ARRAY_ANSIBLE_PATH}"; then
+    fatal "${FILE_ARRAY_ANSIBLE_PATH} doesn't contain ${ANSIBLE_DIRECTORY}"
+  fi
+
+  notice "${FUNCTION_NAME} PASS"
+}
+
 GenerateFileDiffOneFileTest
 GenerateFileDiffOneFilePushEventTest
 GenerateFileDiffTwoFilesTest
 GenerateFileDiffTwoFilesPushEventTest
 GenerateFileDiffInitialCommitPushEventTest
+
+BuildFileArraysAnsibleGitHubWorkspaceTest

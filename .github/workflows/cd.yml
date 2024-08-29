@@ -17,7 +17,6 @@ jobs:
       cancel-in-progress: true
     permissions:
       contents: read
-      deployments: write
       issues: write
       packages: write
     strategy:
@@ -35,17 +34,24 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set build metadata
         run: |
           if [[ ${{ github.event_name }} == 'push' ]] || [[ ${{ github.event_name }} == 'merge_group' ]]; then
             BUILD_REVISION=${{ github.sha }}
-            BUILD_VERSION=${{ github.sha }}
           elif [[ ${{ github.event_name }} == 'pull_request' ]]; then
             BUILD_REVISION=${{ github.event.pull_request.head.sha }}
-            BUILD_VERSION=${{ github.event.pull_request.head.sha }}
           else
             echo "[ERROR] Event not supported when setting build revision and build version"
+            exit 1
+          fi
+
+          . scripts/build-metadata.sh
+
+          if [ -z "${BUILD_DATE}" ]; then
+            echo "[ERROR] BUILD_DATE is empty"
             exit 1
           fi
 
@@ -59,8 +65,12 @@ jobs:
             exit 1
           fi
 
+          echo "Build date (GH Actions workflow): ${BUILD_DATE}"
+          echo "Build revision (GH Actions workflow): ${BUILD_REVISION}"
+          echo "Build version (GH Actions workflow): ${BUILD_VERSION}"
+
           {
-            echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "BUILD_DATE=${BUILD_DATE}"
             echo "BUILD_REVISION=${BUILD_REVISION}"
             echo "BUILD_VERSION=${BUILD_VERSION}"
           } >> "${GITHUB_ENV}"
@@ -77,7 +87,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -100,22 +110,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to GHCR
-        uses: docker/login-action@v3.1.0
+        uses: docker/login-action@v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Start deployment
-        uses: bobheadxi/deployments@v1.5.0
-        id: deployment
-        with:
-          step: start
-          token: ${{ secrets.GITHUB_TOKEN }}
-          env: Production
-
       - name: Build and Push Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -132,21 +134,6 @@ jobs:
           tags: |
             ${{ env.CONTAINER_IMAGE_ID }}
           target: "${{ matrix.images.target }}"
-
-      - name: Update deployment
-        uses: bobheadxi/deployments@v1.5.0
-        # We depend on the 'deployment' step outputs, so we can't run this step
-        # if the 'deployment' step didn't run. This can happen if any step
-        # before the 'deployment' step fails. That's why 'always()' is not
-        # suitable here.
-        if: steps.deployment.conclusion != 'cancelled' && steps.deployment.conclusion != 'skipped'
-        with:
-          step: finish
-          token: ${{ secrets.GITHUB_TOKEN }}
-          status: ${{ job.status }}
-          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
-          env: ${{ steps.deployment.outputs.env }}
-          env_url: https://github.com/super-linter/super-linter
 
       - name: Create Issue on Failure
         uses: actions/github-script@v7
@@ -174,27 +161,17 @@ jobs:
       cancel-in-progress: true
     permissions:
       contents: write
-      deployments: write
       issues: write
       packages: write
       pull-requests: write
     timeout-minutes: 60
     steps:
-      - uses: google-github-actions/release-please-action@v4
+      - uses: googleapis/release-please-action@v4.1.3
         id: release
         with:
           config-file: .github/release-please/release-please-config.json
           manifest-file: .github/release-please/.release-please-manifest.json
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Start deployment
-        if: steps.release.outputs.release_created
-        uses: bobheadxi/deployments@v1.5.0
-        id: deployment
-        with:
-          step: start
-          token: ${{ secrets.GITHUB_TOKEN }}
-          env: Release
 
       - name: Configure release metedata
         if: steps.release.outputs.release_created
@@ -221,7 +198,7 @@ jobs:
 
       - name: Login to GHCR
         if: steps.release.outputs.release_created
-        uses: docker/login-action@v3.1.0
+        uses: docker/login-action@v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -263,21 +240,6 @@ jobs:
 
           git push --force origin ${{ env.SEMVER_MAJOR_VERSION }}
           git push --force origin latest
-
-      - name: Update deployment
-        uses: bobheadxi/deployments@v1.5.0
-        # We depend on the 'deployment' step outputs, so we can't run this step
-        # if the 'deployment' step didn't run. This can happen if any step
-        # before the 'deployment' step fails. That's why 'always()' is not
-        # suitable here.
-        if: steps.deployment.conclusion != 'cancelled' && steps.deployment.conclusion != 'skipped'
-        with:
-          step: finish
-          token: ${{ secrets.GITHUB_TOKEN }}
-          status: ${{ job.status }}
-          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
-          env: ${{ steps.deployment.outputs.env }}
-          env_url: https://github.com/super-linter/super-linter
 
       - name: Create Issue on Failure
         uses: actions/github-script@v7

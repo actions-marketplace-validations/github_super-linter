@@ -29,6 +29,14 @@ source /action/lib/functions/worker.sh # Source the function script(s)
 source /action/lib/functions/setupSSH.sh # Source the function script(s)
 # shellcheck source=/dev/null
 source /action/lib/functions/githubEvent.sh
+# shellcheck source=/dev/null
+source /action/lib/functions/githubDomain.sh
+# shellcheck source=/dev/null
+source /action/lib/functions/output.sh
+
+if ! ValidateGitHubUrls; then
+  fatal "GitHub URLs failed validation"
+fi
 
 # We want a lowercase value
 declare -l RUN_LOCAL
@@ -41,14 +49,20 @@ RUN_LOCAL="${RUN_LOCAL:-"false"}"
 # configure it.
 if [[ "${RUN_LOCAL}" == "true" ]]; then
   DEFAULT_ENABLE_GITHUB_ACTIONS_GROUP_TITLE="false"
+  DEFAULT_ENABLE_GITHUB_ACTIONS_STEP_SUMMARY="false"
 else
   DEFAULT_ENABLE_GITHUB_ACTIONS_GROUP_TITLE="true"
+  DEFAULT_ENABLE_GITHUB_ACTIONS_STEP_SUMMARY="true"
 fi
 # Let users configure GitHub Actions log markers regardless of running locally or not
 ENABLE_GITHUB_ACTIONS_GROUP_TITLE="${ENABLE_GITHUB_ACTIONS_GROUP_TITLE:-"${DEFAULT_ENABLE_GITHUB_ACTIONS_GROUP_TITLE}"}"
 export ENABLE_GITHUB_ACTIONS_GROUP_TITLE
 
 startGitHubActionsLogGroup "${SUPER_LINTER_INITIALIZATION_LOG_GROUP_TITLE}"
+
+# Let users configure GitHub Actions step summary regardless of running locally or not
+ENABLE_GITHUB_ACTIONS_STEP_SUMMARY="${ENABLE_GITHUB_ACTIONS_STEP_SUMMARY:-"${DEFAULT_ENABLE_GITHUB_ACTIONS_STEP_SUMMARY}"}"
+export ENABLE_GITHUB_ACTIONS_STEP_SUMMARY
 
 # We want a lowercase value
 declare -l BASH_EXEC_IGNORE_LIBRARIES
@@ -74,6 +88,10 @@ declare -l MULTI_STATUS
 MULTI_STATUS="${MULTI_STATUS:-true}"
 
 # We want a lowercase value
+declare -l SAVE_SUPER_LINTER_OUTPUT
+SAVE_SUPER_LINTER_OUTPUT="${SAVE_SUPER_LINTER_OUTPUT:-false}"
+
+# We want a lowercase value
 declare -l SSH_INSECURE_NO_VERIFY_GITHUB_KEY
 SSH_INSECURE_NO_VERIFY_GITHUB_KEY="${SSH_INSECURE_NO_VERIFY_GITHUB_KEY:-false}"
 
@@ -95,6 +113,10 @@ declare -l TEST_CASE_RUN
 TEST_CASE_RUN="${TEST_CASE_RUN:-"false"}"
 export TEST_CASE_RUN
 
+declare -l FIX_MODE_TEST_CASE_RUN
+FIX_MODE_TEST_CASE_RUN="${FIX_MODE_TEST_CASE_RUN:-"false"}"
+export FIX_MODE_TEST_CASE_RUN
+
 # We want a lowercase value
 declare -l USE_FIND_ALGORITHM
 USE_FIND_ALGORITHM="${USE_FIND_ALGORITHM:-false}"
@@ -107,6 +129,23 @@ VALIDATE_ALL_CODEBASE="${VALIDATE_ALL_CODEBASE:-"true"}"
 declare -l YAML_ERROR_ON_WARNING
 YAML_ERROR_ON_WARNING="${YAML_ERROR_ON_WARNING:-false}"
 
+# We want a lowercase value
+declare -l SAVE_SUPER_LINTER_SUMMARY
+SAVE_SUPER_LINTER_SUMMARY="${SAVE_SUPER_LINTER_SUMMARY:-false}"
+
+# Define private output paths early because cleanup depends on those being defined
+DEFAULT_SUPER_LINTER_OUTPUT_DIRECTORY_NAME="super-linter-output"
+SUPER_LINTER_OUTPUT_DIRECTORY_NAME="${SUPER_LINTER_OUTPUT_DIRECTORY_NAME:-${DEFAULT_SUPER_LINTER_OUTPUT_DIRECTORY_NAME}}"
+export SUPER_LINTER_OUTPUT_DIRECTORY_NAME
+debug "Super-linter main output directory name: ${SUPER_LINTER_OUTPUT_DIRECTORY_NAME}"
+
+SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH="/tmp/${DEFAULT_SUPER_LINTER_OUTPUT_DIRECTORY_NAME}"
+export SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH
+debug "Super-linter private output directory path: ${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}"
+mkdir -p "${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}"
+
+FIX_MODE_ENABLED="false"
+
 ValidateBooleanConfigurationVariables
 
 ###########
@@ -116,16 +155,9 @@ DEFAULT_RULES_LOCATION='/action/lib/.automation'                            # De
 DEFAULT_SUPER_LINTER_WORKSPACE="/tmp/lint"                                  # Fall-back value for the workspace
 DEFAULT_WORKSPACE="${DEFAULT_WORKSPACE:-${DEFAULT_SUPER_LINTER_WORKSPACE}}" # Default workspace if running locally
 FILTER_REGEX_INCLUDE="${FILTER_REGEX_INCLUDE:-""}"
+export FILTER_REGEX_INCLUDE
 FILTER_REGEX_EXCLUDE="${FILTER_REGEX_EXCLUDE:-""}"
-GITHUB_DOMAIN="${GITHUB_DOMAIN:-"github.com"}"
-GITHUB_DOMAIN="${GITHUB_DOMAIN%/}" # Remove trailing slash if present
-# GitHub API root url
-GITHUB_API_URL="${GITHUB_CUSTOM_API_URL:-"https://api.${GITHUB_DOMAIN}"}"
-GITHUB_API_URL="${GITHUB_API_URL%/}" # Remove trailing slash if present
-GITHUB_SERVER_URL="https://${GITHUB_DOMAIN}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-GITHUB_META_URL="${GITHUB_API_URL}/meta"
-LINTER_RULES_PATH="${LINTER_RULES_PATH:-.github/linters}" # Linter rules directory
+export FILTER_REGEX_EXCLUDE
 # shellcheck disable=SC2034 # Variable is referenced in other scripts
 RAW_FILE_ARRAY=() # Array of all files that were changed
 # shellcheck disable=SC2034 # Variable is referenced in other scripts
@@ -142,176 +174,13 @@ TFLINT_LOG="${TF_LOG_LEVEL}"
 export TFLINT_LOG
 debug "TFLINT_LOG: ${TFLINT_LOG}"
 
-###############
-# Rules files #
-###############
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-ANSIBLE_FILE_NAME="${ANSIBLE_CONFIG_FILE:-.ansible-lint.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-ARM_FILE_NAME=".arm-ttk.psd1"
-BASH_SEVERITY="${BASH_SEVERITY:-""}"
-CHECKOV_FILE_NAME="${CHECKOV_FILE_NAME:-".checkov.yaml"}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-CLANG_FORMAT_FILE_NAME="${CLANG_FORMAT_FILE_NAME:-".clang-format"}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-CLOJURE_FILE_NAME=".clj-kondo/config.edn"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-CLOUDFORMATION_FILE_NAME=".cfnlintrc.yml"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-COFFEESCRIPT_FILE_NAME=".coffee-lint.json"
-CSS_FILE_NAME="${CSS_FILE_NAME:-.stylelintrc.json}"
-DOCKERFILE_HADOLINT_FILE_NAME="${DOCKERFILE_HADOLINT_FILE_NAME:-.hadolint.yaml}"
-EDITORCONFIG_FILE_NAME="${EDITORCONFIG_FILE_NAME:-.ecrc}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-GITHUB_ACTIONS_FILE_NAME="${GITHUB_ACTIONS_CONFIG_FILE:-actionlint.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-GITHUB_ACTIONS_COMMAND_ARGS="${GITHUB_ACTIONS_COMMAND_ARGS:-null}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-GITLEAKS_FILE_NAME="${GITLEAKS_CONFIG_FILE:-.gitleaks.toml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-GHERKIN_FILE_NAME=".gherkin-lintrc"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-GO_FILE_NAME=".golangci.yml"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-GROOVY_FILE_NAME=".groovylintrc.json"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-HTML_FILE_NAME=".htmlhintrc"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-JAVA_FILE_NAME="${JAVA_FILE_NAME:-sun_checks.xml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-JAVASCRIPT_ES_FILE_NAME="${JAVASCRIPT_ES_CONFIG_FILE:-.eslintrc.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-JAVASCRIPT_DEFAULT_STYLE="${JAVASCRIPT_DEFAULT_STYLE:-standard}"
-JAVASCRIPT_STYLE_NAME='' # Variable for the style
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-JAVASCRIPT_STANDARD_FILE_NAME="${JAVASCRIPT_ES_CONFIG_FILE:-.eslintrc.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-JSCPD_FILE_NAME="${JSCPD_CONFIG_FILE:-.jscpd.json}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-JSX_FILE_NAME="${JAVASCRIPT_ES_CONFIG_FILE:-.eslintrc.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-KUBERNETES_KUBECONFORM_OPTIONS="${KUBERNETES_KUBECONFORM_OPTIONS:-null}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-LATEX_FILE_NAME=".chktexrc"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-LUA_FILE_NAME=".luacheckrc"
-MARKDOWN_CUSTOM_RULE_GLOBS="${MARKDOWN_CUSTOM_RULE_GLOBS:-""}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-MARKDOWN_FILE_NAME="${MARKDOWN_CONFIG_FILE:-.markdown-lint.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-OPENAPI_FILE_NAME=".openapirc.yml"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PERL_PERLCRITIC_OPTIONS="${PERL_PERLCRITIC_OPTIONS:-null}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PHP_BUILTIN_FILE_NAME="${PHP_CONFIG_FILE:-php.ini}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PHP_PHPCS_FILE_NAME="${PHP_PHPCS_FILE_NAME:-phpcs.xml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PHP_PHPSTAN_FILE_NAME="phpstan.neon"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PHP_PSALM_FILE_NAME="psalm.xml"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-POWERSHELL_FILE_NAME=".powershell-psscriptanalyzer.psd1"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PROTOBUF_FILE_NAME="${PROTOBUF_CONFIG_FILE:-.protolintrc.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PYTHON_BLACK_FILE_NAME="${PYTHON_BLACK_CONFIG_FILE:-.python-black}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PYTHON_FLAKE8_FILE_NAME="${PYTHON_FLAKE8_CONFIG_FILE:-.flake8}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PYTHON_ISORT_FILE_NAME="${PYTHON_ISORT_CONFIG_FILE:-.isort.cfg}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PYTHON_MYPY_FILE_NAME="${PYTHON_MYPY_CONFIG_FILE:-.mypy.ini}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PYTHON_PYLINT_FILE_NAME="${PYTHON_PYLINT_CONFIG_FILE:-.python-lint}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-PYTHON_RUFF_FILE_NAME="${PYTHON_RUFF_CONFIG_FILE:-.ruff.toml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-R_FILE_NAME=".lintr"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-RUBY_FILE_NAME="${RUBY_CONFIG_FILE:-.ruby-lint.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-SCALAFMT_FILE_NAME="${SCALAFMT_CONFIG_FILE:-.scalafmt.conf}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-SNAKEMAKE_SNAKEFMT_FILE_NAME="${SNAKEMAKE_SNAKEFMT_CONFIG_FILE:-.snakefmt.toml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-SQL_FILE_NAME="${SQL_CONFIG_FILE:-.sql-config.json}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-SQLFLUFF_FILE_NAME="${SQLFLUFF_CONFIG_FILE:-/.sqlfluff}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-TERRAFORM_TFLINT_FILE_NAME="${TERRAFORM_TFLINT_CONFIG_FILE:-.tflint.hcl}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-TERRAFORM_TERRASCAN_FILE_NAME="${TERRAFORM_TERRASCAN_CONFIG_FILE:-terrascan.toml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-NATURAL_LANGUAGE_FILE_NAME="${NATURAL_LANGUAGE_CONFIG_FILE:-.textlintrc}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-TSX_FILE_NAME="${TYPESCRIPT_ES_CONFIG_FILE:-.eslintrc.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-TYPESCRIPT_DEFAULT_STYLE="${TYPESCRIPT_DEFAULT_STYLE:-ts-standard}"
-TYPESCRIPT_STYLE_NAME='' # Variable for the style
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-TYPESCRIPT_ES_FILE_NAME="${TYPESCRIPT_ES_CONFIG_FILE:-.eslintrc.yml}"
-# shellcheck disable=SC2034  # Variable is referenced indirectly
-YAML_FILE_NAME="${YAML_CONFIG_FILE:-.yaml-lint.yml}"
+# Load linter configuration and rules files
+# shellcheck source=/dev/null
+source /action/lib/globals/linterRules.sh
 
-#################################################
-# Parse if we are using JS standard or prettier #
-#################################################
-# Remove spaces
-JAVASCRIPT_DEFAULT_STYLE=$(echo "${JAVASCRIPT_DEFAULT_STYLE}" | tr -d ' ')
-# lowercase
-JAVASCRIPT_DEFAULT_STYLE=$(echo "${JAVASCRIPT_DEFAULT_STYLE}" | tr '[:upper:]' '[:lower:]')
-# Check and set
-if [ "${JAVASCRIPT_DEFAULT_STYLE}" == "prettier" ]; then
-  # Set to prettier
-  JAVASCRIPT_STYLE_NAME='JAVASCRIPT_PRETTIER'
-else
-  # Default to standard
-  JAVASCRIPT_STYLE_NAME='JAVASCRIPT_STANDARD'
-fi
-
-#################################################
-# Parse if we are using JS standard or prettier #
-#################################################
-# Remove spaces
-TYPESCRIPT_DEFAULT_STYLE=$(echo "${TYPESCRIPT_DEFAULT_STYLE}" | tr -d ' ')
-# lowercase
-TYPESCRIPT_DEFAULT_STYLE=$(echo "${TYPESCRIPT_DEFAULT_STYLE}" | tr '[:upper:]' '[:lower:]')
-# Check and set
-if [ "${TYPESCRIPT_DEFAULT_STYLE}" == "prettier" ]; then
-  # Set to prettier
-  TYPESCRIPT_STYLE_NAME='TYPESCRIPT_PRETTIER'
-else
-  # Default to standard
-  TYPESCRIPT_STYLE_NAME='TYPESCRIPT_STANDARD'
-fi
-
-##################
-# Language array #
-##################
-LANGUAGE_ARRAY=('ANSIBLE' 'ARM' 'BASH' 'BASH_EXEC' 'CHECKOV' 'CLANG_FORMAT'
-  'CLOUDFORMATION' 'CLOJURE' 'COFFEESCRIPT' 'CPP' 'CSHARP' 'CSS' 'DART'
-  'DOCKERFILE_HADOLINT' 'EDITORCONFIG' 'ENV' 'GITHUB_ACTIONS'
-  'GITLEAKS' 'GHERKIN' 'GO' 'GO_MODULES' 'GO_RELEASER' 'GOOGLE_JAVA_FORMAT' 'GROOVY' 'HTML' 'JAVA'
-  'JAVASCRIPT_ES' "${JAVASCRIPT_STYLE_NAME}" 'JSCPD' 'JSON' 'JSONC' 'JSX'
-  'KUBERNETES_KUBECONFORM' 'KOTLIN' 'LATEX' 'LUA' 'MARKDOWN'
-  'NATURAL_LANGUAGE' 'OPENAPI' 'PERL' 'PHP_BUILTIN' 'PHP_PHPCS' 'PHP_PHPSTAN'
-  'PHP_PSALM' 'POWERSHELL' 'PROTOBUF' 'PYTHON_BLACK' 'PYTHON_PYLINT'
-  'PYTHON_FLAKE8' 'PYTHON_ISORT' 'PYTHON_MYPY' 'PYTHON_RUFF'
-  'R' 'RAKU' 'RENOVATE' 'RUBY' 'RUST_2015'
-  'RUST_2018' 'RUST_2021' 'RUST_CLIPPY' 'SCALAFMT' 'SHELL_SHFMT'
-  'SNAKEMAKE_LINT' 'SNAKEMAKE_SNAKEFMT' 'STATES' 'SQL' 'SQLFLUFF' 'TEKTON'
-  'TERRAFORM_FMT' 'TERRAFORM_TFLINT' 'TERRAFORM_TERRASCAN' 'TERRAGRUNT' 'TSX'
-  'TYPESCRIPT_ES' "${TYPESCRIPT_STYLE_NAME}" 'XML' 'YAML')
-
-##########################
-# Array of changed files #
-##########################
-for LANGUAGE in "${LANGUAGE_ARRAY[@]}"; do
-  FILE_ARRAY_VARIABLE_NAME="FILE_ARRAY_${LANGUAGE}"
-  debug "Initializing ${FILE_ARRAY_VARIABLE_NAME}"
-  eval "${FILE_ARRAY_VARIABLE_NAME}=()"
-done
+# Load languages array
+# shellcheck source=/dev/null
+source /action/lib/globals/languages.sh
 
 Header() {
   if [[ "${SUPPRESS_POSSUM}" == "false" ]]; then
@@ -435,8 +304,31 @@ GetGitHubVars() {
 
         # Ref: https://docs.github.com/en/actions/learn-github-actions/contexts#github-context
         debug "Get the hash of the commit to start the diff from from Git because the GitHub push event payload may not contain references to base_ref or previous commit."
+
+        debug "Check if the commit is a merge commit by checking if it has more than one parent"
+        local GIT_COMMIT_PARENTS_COUNT
+        GIT_COMMIT_PARENTS_COUNT=$(git -C "${GITHUB_WORKSPACE}" rev-list --parents -n 1 "${GITHUB_SHA}" | wc -w)
+        debug "Git commit parents count (GIT_COMMIT_PARENTS_COUNT): ${GIT_COMMIT_PARENTS_COUNT}"
+        GIT_COMMIT_PARENTS_COUNT=$((GIT_COMMIT_PARENTS_COUNT - 1))
+        debug "Subtract 1 from GIT_COMMIT_PARENTS_COUNT to get the actual number of merge parents because the count includes the commit itself. GIT_COMMIT_PARENTS_COUNT: ${GIT_COMMIT_PARENTS_COUNT}"
+
+        # Ref: https://git-scm.com/docs/git-rev-parse#Documentation/git-rev-parse.txt
+        local GIT_BEFORE_SHA_HEAD="HEAD"
+        if [ ${GIT_COMMIT_PARENTS_COUNT} -gt 1 ]; then
+          debug "${GITHUB_SHA} is a merge commit because it has more than one parent."
+          GIT_BEFORE_SHA_HEAD="${GIT_BEFORE_SHA_HEAD}^2"
+          debug "Add the suffix to GIT_BEFORE_SHA_HEAD to get the second parent of the merge commit: ${GIT_BEFORE_SHA_HEAD}"
+          GITHUB_PUSH_COMMIT_COUNT=$((GITHUB_PUSH_COMMIT_COUNT - 1))
+          debug "Remove one commit from GITHUB_PUSH_COMMIT_COUNT to account for the merge commit. GITHUB_PUSH_COMMIT_COUNT: ${GITHUB_PUSH_COMMIT_COUNT}"
+        else
+          debug "${GITHUB_SHA} is not a merge commit because it has a single parent. No need to add the parent identifier (^) to the revision indicator because it's implicitly set to ^1 when there's only one parent."
+        fi
+
+        GIT_BEFORE_SHA_HEAD="${GIT_BEFORE_SHA_HEAD}~${GITHUB_PUSH_COMMIT_COUNT}"
+        debug "GIT_BEFORE_SHA_HEAD: ${GIT_BEFORE_SHA_HEAD}"
+
         # shellcheck disable=SC2086  # We checked that GITHUB_PUSH_COMMIT_COUNT is an integer
-        if ! GITHUB_BEFORE_SHA=$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD~${GITHUB_PUSH_COMMIT_COUNT}); then
+        if ! GITHUB_BEFORE_SHA=$(git -C "${GITHUB_WORKSPACE}" rev-parse ${GIT_BEFORE_SHA_HEAD}); then
           fatal "Failed to initialize GITHUB_BEFORE_SHA for a push event. Output: ${GITHUB_BEFORE_SHA}"
         fi
 
@@ -586,6 +478,11 @@ Footer() {
   local SUPER_LINTER_EXIT_CODE
   SUPER_LINTER_EXIT_CODE=0
 
+  if [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "true" ]]; then
+    debug "Saving Super-linter summary to ${SUPER_LINTER_SUMMARY_OUTPUT_PATH}"
+    WriteSummaryHeader "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}"
+  fi
+
   for LANGUAGE in "${LANGUAGE_ARRAY[@]}"; do
     # This used to be the count of errors found for a given LANGUAGE, but since
     # after we switched to running linters against a batch of files, it may not
@@ -593,7 +490,7 @@ Footer() {
     # but a number that's less than that because of how GNU parallel returns
     # exit codes.
     # Ref: https://www.gnu.org/software/parallel/parallel.html#exit-status
-    ERROR_COUNTER_FILE_PATH="/tmp/super-linter-parallel-command-exit-code-${LANGUAGE}"
+    ERROR_COUNTER_FILE_PATH="${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}/super-linter-parallel-command-exit-code-${LANGUAGE}"
     if [ ! -f "${ERROR_COUNTER_FILE_PATH}" ]; then
       debug "Error counter ${ERROR_COUNTER_FILE_PATH} doesn't exist"
     else
@@ -602,21 +499,26 @@ Footer() {
 
       if [[ ${ERROR_COUNTER} -ne 0 ]]; then
         error "Errors found in ${LANGUAGE}"
-        # Print output as error in case users disabled the INFO level so they
-        # get feedback
+
+        if [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "true" ]]; then
+          WriteSummaryLineFailure "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}" "${LANGUAGE}"
+        fi
+
+        # Print stdout and stderr in case the log level is higher than INFO
+        # so users still get feedback. Print output as error so it gets emitted
         if [[ "${LOG_VERBOSE}" != "true" ]]; then
           local STDOUT_LINTER_FILE_PATH
-          STDOUT_LINTER_FILE_PATH="/tmp/super-linter-parallel-stdout-${LANGUAGE}"
+          STDOUT_LINTER_FILE_PATH="${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}/super-linter-parallel-stdout-${LANGUAGE}"
           if [[ -e "${STDOUT_LINTER_FILE_PATH}" ]]; then
-            error "$(cat "${STDOUT_LINTER_FILE_PATH}")"
+            error "Stdout contents for ${LANGUAGE}:\n------\n$(cat "${STDOUT_LINTER_FILE_PATH}")\n------"
           else
             debug "Stdout output file path for ${LANGUAGE} (${STDOUT_LINTER_FILE_PATH}) doesn't exist"
           fi
 
           local STDERR_LINTER_FILE_PATH
-          STDERR_LINTER_FILE_PATH="/tmp/super-linter-parallel-stderr-${LANGUAGE}"
+          STDERR_LINTER_FILE_PATH="${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}/super-linter-parallel-stderr-${LANGUAGE}"
           if [[ -e "${STDERR_LINTER_FILE_PATH}" ]]; then
-            error "$(cat "${STDERR_LINTER_FILE_PATH}")"
+            error "Stderr contents for ${LANGUAGE}:\n------\n$(cat "${STDERR_LINTER_FILE_PATH}")\n------"
           else
             debug "Stderr output file path for ${LANGUAGE} (${STDERR_LINTER_FILE_PATH}) doesn't exist"
           fi
@@ -626,6 +528,9 @@ Footer() {
         debug "Setting super-linter exit code to ${SUPER_LINTER_EXIT_CODE} because there were errors for ${LANGUAGE}"
       elif [[ ${ERROR_COUNTER} -eq 0 ]]; then
         notice "Successfully linted ${LANGUAGE}"
+        if [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "true" ]]; then
+          WriteSummaryLineSuccess "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}" "${LANGUAGE}"
+        fi
         CallStatusAPI "${LANGUAGE}" "success"
         ANY_LINTER_SUCCESS="true"
         debug "Set ANY_LINTER_SUCCESS to ${ANY_LINTER_SUCCESS} because ${LANGUAGE} reported a success"
@@ -645,8 +550,28 @@ Footer() {
 
   if [[ ${SUPER_LINTER_EXIT_CODE} -eq 0 ]]; then
     notice "All files and directories linted successfully"
+    if [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "true" ]]; then
+      WriteSummaryFooterSuccess "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}"
+    fi
   else
     error "Super-linter detected linting errors"
+    if [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "true" ]]; then
+      WriteSummaryFooterFailure "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}"
+    fi
+  fi
+
+  if [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "true" ]]; then
+    if ! FormatSuperLinterSummaryFile "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}"; then
+      fatal "Error while formatting the Super-linter summary file."
+    fi
+    debug "Super-linter summary file (${SUPER_LINTER_SUMMARY_OUTPUT_PATH}) contents:\n$(cat "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}")"
+  fi
+
+  if [[ "${ENABLE_GITHUB_ACTIONS_STEP_SUMMARY}" == "true" ]]; then
+    debug "Appending Super-linter summary to ${GITHUB_STEP_SUMMARY}"
+    if ! cat "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}" >>"${GITHUB_STEP_SUMMARY}"; then
+      fatal "Error while appending the content of ${SUPER_LINTER_SUMMARY_OUTPUT_PATH} to ${GITHUB_STEP_SUMMARY}"
+    fi
   fi
 
   exit ${SUPER_LINTER_EXIT_CODE}
@@ -660,8 +585,18 @@ UpdateLoopsForImage() {
     #############################################
     # Need to remove linters for the slim image #
     #############################################
-    REMOVE_ARRAY=("ARM" "CSHARP" "ENV" "POWERSHELL" "RUST_2015" "RUST_2018"
-      "RUST_2021" "RUST_CLIPPY")
+    REMOVE_ARRAY=(
+      "ARM"
+      "CSHARP"
+      "DOTNET_SLN_FORMAT_ANALYZERS"
+      "DOTNET_SLN_FORMAT_STYLE"
+      "DOTNET_SLN_FORMAT_WHITESPACE"
+      "POWERSHELL"
+      "RUST_2015"
+      "RUST_2018"
+      "RUST_2021"
+      "RUST_CLIPPY"
+    )
 
     # Remove from LANGUAGE_ARRAY
     debug "Removing Languages from LANGUAGE_ARRAY for slim image..."
@@ -701,8 +636,20 @@ cleanup() {
         --force \
         "${LOG_TEMP}" "${LOG_FILE_PATH}"
     else
-      debug "Skipping the moving of the log file from ${LOG_TEMP} to ${LOG_FILE_PATH}"
+      debug "Skip moving the log file from ${LOG_TEMP} to ${LOG_FILE_PATH}"
     fi
+
+    if [ "${SAVE_SUPER_LINTER_OUTPUT}" = "true" ]; then
+      if [ -e "${SUPER_LINTER_OUTPUT_DIRECTORY_PATH}" ]; then
+        debug "${SUPER_LINTER_OUTPUT_DIRECTORY_PATH} already exists. Deleting it before moving the new output directory there."
+        rm -fr "${SUPER_LINTER_OUTPUT_DIRECTORY_PATH}"
+      fi
+      debug "Moving Super-linter output from ${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH} to ${SUPER_LINTER_OUTPUT_DIRECTORY_PATH}"
+      mv "${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}" "${SUPER_LINTER_OUTPUT_DIRECTORY_PATH}"
+    else
+      debug "Skip moving the private Super-linter output directory (${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}) to the output directory (${SUPER_LINTER_OUTPUT_DIRECTORY_PATH:-"not initialized yet"})"
+    fi
+
   else
     debug "GITHUB_WORKSPACE is not set. Skipping filesystem cleanup steps"
   fi
@@ -751,16 +698,79 @@ debug "TYPESCRIPT_STANDARD_TSCONFIG_FILE: ${TYPESCRIPT_STANDARD_TSCONFIG_FILE}"
 R_RULES_FILE_PATH_IN_ROOT="${GITHUB_WORKSPACE}/${R_FILE_NAME}"
 debug "R_RULES_FILE_PATH_IN_ROOT: ${R_RULES_FILE_PATH_IN_ROOT}"
 
+SUPER_LINTER_MAIN_OUTPUT_DIRECTORY_PATH="${GITHUB_WORKSPACE}/${SUPER_LINTER_OUTPUT_DIRECTORY_NAME}"
+export SUPER_LINTER_MAIN_OUTPUT_DIRECTORY_PATH
+debug "Super-linter main output directory path: ${SUPER_LINTER_MAIN_OUTPUT_DIRECTORY_PATH}"
+
+SUPER_LINTER_OUTPUT_DIRECTORY_PATH="${SUPER_LINTER_MAIN_OUTPUT_DIRECTORY_PATH}/super-linter"
+export SUPER_LINTER_OUTPUT_DIRECTORY_PATH
+debug "Super-linter output directory path: ${SUPER_LINTER_OUTPUT_DIRECTORY_PATH}"
+
+SUPER_LINTER_SUMMARY_OUTPUT_PATH="${SUPER_LINTER_MAIN_OUTPUT_DIRECTORY_PATH}/${SUPER_LINTER_SUMMARY_FILE_NAME:-"super-linter-summary.md"}"
+export SUPER_LINTER_SUMMARY_OUTPUT_PATH
+debug "Super-linter summary output path: ${SUPER_LINTER_SUMMARY_OUTPUT_PATH}"
+
+if [[ "${ENABLE_GITHUB_ACTIONS_STEP_SUMMARY}" == "true" ]] && [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "false" ]]; then
+  debug "ENABLE_GITHUB_ACTIONS_STEP_SUMMARY is set to ${SAVE_SUPER_LINTER_SUMMARY}, but SAVE_SUPER_LINTER_SUMMARY is set to ${SAVE_SUPER_LINTER_SUMMARY}"
+  SAVE_SUPER_LINTER_SUMMARY="true"
+  debug "Set SAVE_SUPER_LINTER_SUMMARY to ${SAVE_SUPER_LINTER_SUMMARY} because we need to append its contents to ${GITHUB_STEP_SUMMARY} later"
+fi
+
+# Ensure that the main output directory and files exist because the user might not have created them
+# before running Super-linter. These conditions list all the cases that require an output
+# directory to be there.
+if [[ "${SAVE_SUPER_LINTER_OUTPUT}" = "true" ]] ||
+  [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "true" ]] ||
+  [[ "${CREATE_LOG_FILE}" = "true" ]]; then
+  debug "Ensure that ${SUPER_LINTER_MAIN_OUTPUT_DIRECTORY_PATH} exists"
+  mkdir -p "${SUPER_LINTER_MAIN_OUTPUT_DIRECTORY_PATH}"
+fi
+
+if [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "true" ]]; then
+  debug "Remove eventual ${SUPER_LINTER_SUMMARY_OUTPUT_PATH} leftover"
+  rm -f "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}"
+
+  debug "Ensuring that ${SUPER_LINTER_SUMMARY_OUTPUT_PATH} exists."
+  if ! touch "${SUPER_LINTER_SUMMARY_OUTPUT_PATH}"; then
+    fatal "Cannot create Super-linter summary file: ${SUPER_LINTER_SUMMARY_OUTPUT_PATH}"
+  fi
+fi
+
 ############################
 # Validate the environment #
 ############################
-GetValidationInfo
+info "--------------------------------------------"
+info "Validating the configuration"
+if ! ValidateFindMode; then
+  fatal "Error while validating the configuration."
+fi
+if ! ValidateValidationVariables; then
+  fatal "Error while validating the configuration of enabled linters"
+fi
+if ! ValidateAnsibleDirectory; then
+  fatal "Error while validating the configuration of the Ansible directory"
+fi
+
+if [[ "${ENABLE_GITHUB_ACTIONS_STEP_SUMMARY}" == "true" ]] ||
+  [[ "${SAVE_SUPER_LINTER_SUMMARY}" == "true" ]]; then
+  if ! ValidateSuperLinterSummaryOutputPath; then
+    fatal "Super-linter summary configuration failed validation"
+  fi
+else
+  debug "Super-linter summary is disabled. No need to validate its configuration."
+fi
 
 if [[ "${USE_FIND_ALGORITHM}" == "false" ]] || [[ "${IGNORE_GITIGNORED_FILES}" == "true" ]]; then
   debug "Validate the local Git environment"
   ValidateLocalGitRepository
-  ValidateGitShaReference
-  ValidateDefaultGitBranch
+
+  # We need to validate the commit SHA reference and the default branch only when
+  # using Git to get the list of files to lint
+  if [[ "${USE_FIND_ALGORITHM}" == "false" ]]; then
+    debug "Validate the Git SHA and branch references"
+    ValidateGitShaReference
+    ValidateDefaultGitBranch
+  fi
 else
   debug "Skipped the validation of the local Git environment because we don't depend on it."
 fi
@@ -780,8 +790,6 @@ LinterRulesLocation
 ########################
 # Get the linter rules #
 ########################
-LANGUAGE_ARRAY_FOR_LINTER_RULES=("${LANGUAGE_ARRAY[@]}" "TYPESCRIPT_STANDARD_TSCONFIG")
-
 for LANGUAGE in "${LANGUAGE_ARRAY_FOR_LINTER_RULES[@]}"; do
   debug "Loading rules for ${LANGUAGE}..."
   eval "GetLinterRules ${LANGUAGE} ${DEFAULT_RULES_LOCATION}"
@@ -789,6 +797,18 @@ done
 
 # Load rules for special cases
 GetStandardRules "javascript"
+
+#############################################################################
+# Validate the environment that depends on linter rules variables being set #
+#############################################################################
+
+# We need the variables defined in linterCommandsOptions to initialize FIX_....
+# variables.
+# shellcheck source=/dev/null
+source /action/lib/globals/linterCommandsOptions.sh
+if ! ValidateCheckModeAndFixModeVariables; then
+  fatal "Error while validating the configuration fix mode for linters that support that"
+fi
 
 #################################
 # Check for SSL cert and update #
@@ -811,11 +831,22 @@ endGitHubActionsLogGroup "${SUPER_LINTER_INITIALIZATION_LOG_GROUP_TITLE}"
 # Run linters #
 ###############
 declare PARALLEL_RESULTS_FILE_PATH
-PARALLEL_RESULTS_FILE_PATH="/tmp/super-linter-results.json"
+PARALLEL_RESULTS_FILE_PATH="${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}/super-linter-results.json"
 debug "PARALLEL_RESULTS_FILE_PATH: ${PARALLEL_RESULTS_FILE_PATH}"
 
+declare -i LINTING_MAX_PROCS
+LINTING_MAX_PROCS=$(nproc)
+
+CheckIfFixModeIsEnabled
+if [[ "${FIX_MODE_ENABLED}" == "true" ]]; then
+  # This slows down the fix process, but avoids that linters that work on the same
+  # types of files try opening the same file at the same time
+  LINTING_MAX_PROCS=1
+  debug "Set LINTING_MAX_PROCS to ${LINTING_MAX_PROCS} to avoid that linters and formatters edit the same file at the same time."
+fi
+
 declare -a PARALLEL_COMMAND
-PARALLEL_COMMAND=(parallel --will-cite --keep-order --max-procs "$(($(nproc) * 1))" --xargs --results "${PARALLEL_RESULTS_FILE_PATH}")
+PARALLEL_COMMAND=(parallel --will-cite --keep-order --max-procs "$((LINTING_MAX_PROCS))" --xargs --results "${PARALLEL_RESULTS_FILE_PATH}")
 
 # Run one LANGUAGE per process. Each of these processes will run more processees in parellel if supported
 PARALLEL_COMMAND+=(--max-lines 1)

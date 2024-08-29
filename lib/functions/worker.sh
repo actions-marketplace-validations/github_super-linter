@@ -15,7 +15,12 @@ function LintCodebase() {
       unset -n VALIDATE_LANGUAGE
       return 0
     else
-      fatal "Don't disable any validation when running in test mode. VALIDATE_${FILE_TYPE} is set to: ${VALIDATE_LANGUAGE}. Set it to: true"
+      if [[ "${FIX_MODE_TEST_CASE_RUN}" == "true" ]]; then
+        debug "Don't fail the test even if VALIDATE_${FILE_TYPE} is set to ${VALIDATE_LANGUAGE} because ${FILE_TYPE} might not support fix mode"
+        return 0
+      else
+        fatal "Don't disable any validation when running in test mode. VALIDATE_${FILE_TYPE} is set to: ${VALIDATE_LANGUAGE}. Set it to: true"
+      fi
     fi
   fi
 
@@ -32,6 +37,7 @@ function LintCodebase() {
   local -n FILE_ARRAY="FILE_ARRAY_${FILE_TYPE}"
   local FILE_ARRAY_LANGUAGE_PATH="${FILE_ARRAYS_DIRECTORY_PATH}/file-array-${FILE_TYPE}"
   if [[ -e "${FILE_ARRAY_LANGUAGE_PATH}" ]]; then
+    FILE_ARRAY=()
     while read -r FILE; do
       if [[ "${TEST_CASE_RUN}" == "true" ]]; then
         debug "Ensure that the list files to check for ${FILE_TYPE} doesn't include test cases for other languages"
@@ -78,7 +84,7 @@ function LintCodebase() {
   info "Linting ${FILE_TYPE} items..."
 
   local PARALLEL_RESULTS_FILE_PATH
-  PARALLEL_RESULTS_FILE_PATH="/tmp/super-linter-worker-results-${FILE_TYPE}.json"
+  PARALLEL_RESULTS_FILE_PATH="${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}/super-linter-worker-results-${FILE_TYPE}.json"
   debug "PARALLEL_RESULTS_FILE_PATH for ${FILE_TYPE}: ${PARALLEL_RESULTS_FILE_PATH}"
 
   local -a PARALLEL_COMMAND
@@ -97,11 +103,13 @@ function LintCodebase() {
     [[ "${FILE_TYPE}" == "BASH_EXEC" ]] ||
     [[ "${FILE_TYPE}" == "CLOJURE" ]] ||
     [[ "${FILE_TYPE}" == "CSHARP" ]] ||
+    [[ "${FILE_TYPE}" == "DOTNET_SLN_FORMAT_ANALYZERS" ]] ||
+    [[ "${FILE_TYPE}" == "DOTNET_SLN_FORMAT_STYLE" ]] ||
+    [[ "${FILE_TYPE}" == "DOTNET_SLN_FORMAT_WHITESPACE" ]] ||
     [[ "${FILE_TYPE}" == "GITLEAKS" ]] ||
     [[ "${FILE_TYPE}" == "GO_MODULES" ]] ||
     [[ "${FILE_TYPE}" == "JSCPD" ]] ||
     [[ "${FILE_TYPE}" == "KOTLIN" ]] ||
-    [[ "${FILE_TYPE}" == "SQL" ]] ||
     [[ "${FILE_TYPE}" == "SQLFLUFF" ]] ||
     [[ "${FILE_TYPE}" == "CHECKOV" ]] ||
     [[ "${FILE_TYPE}" == "POWERSHELL" ]] ||
@@ -128,6 +136,7 @@ function LintCodebase() {
   if [[ ${FILE_TYPE} == "CSHARP" ]] ||
     [[ (${FILE_TYPE} == "R" && -f "$(dirname "${FILE}")/.lintr") ]] ||
     [[ ${FILE_TYPE} == "KOTLIN" ]] ||
+    [[ ${FILE_TYPE} == "RUST_CLIPPY" ]] ||
     [[ ${FILE_TYPE} == "TERRAFORM_TFLINT" ]]; then
     LINTER_WORKING_DIRECTORY="{//}"
   elif [[ ${FILE_TYPE} == "ANSIBLE" ]] ||
@@ -141,6 +150,16 @@ function LintCodebase() {
 
   # shellcheck source=/dev/null
   source /action/lib/functions/linterCommands.sh
+  # Dynamically add arguments and commands to each linter command as needed
+  if ! InitFixModeOptionsAndCommands "${FILE_TYPE}"; then
+    fatal "Error while inizializing fix mode and check only options and commands before running linter for ${FILE_TYPE}"
+  fi
+  InitInputConsumeCommands
+
+  if [[ "${FILE_TYPE}" == "POWERSHELL" ]]; then
+    debug "Language: ${FILE_TYPE}. Initialize PowerShell command"
+    InitPowerShellCommand
+  fi
 
   local -n LINTER_COMMAND_ARRAY
   LINTER_COMMAND_ARRAY="LINTER_COMMANDS_ARRAY_${FILE_TYPE}"
@@ -163,7 +182,7 @@ function LintCodebase() {
   debug "PARALLEL_COMMAND_OUTPUT for ${FILE_TYPE} (exit code: ${PARALLEL_COMMAND_RETURN_CODE}): ${PARALLEL_COMMAND_OUTPUT}"
   debug "Parallel output file (${PARALLEL_RESULTS_FILE_PATH}) contents for ${FILE_TYPE}:\n$(cat "${PARALLEL_RESULTS_FILE_PATH}")"
 
-  echo ${PARALLEL_COMMAND_RETURN_CODE} >"/tmp/super-linter-parallel-command-exit-code-${FILE_TYPE}"
+  echo ${PARALLEL_COMMAND_RETURN_CODE} >"${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}/super-linter-parallel-command-exit-code-${FILE_TYPE}"
 
   if [ ${PARALLEL_COMMAND_RETURN_CODE} -ne 0 ]; then
     error "Found errors when linting ${FILE_TYPE}. Exit code: ${PARALLEL_COMMAND_RETURN_CODE}."
@@ -193,16 +212,12 @@ function LintCodebase() {
   fi
 
   if [ -n "${STDOUT_LINTER}" ]; then
-    local STDOUT_LINTER_LOG_MESSAGE
-    STDOUT_LINTER_LOG_MESSAGE="Command output for ${FILE_TYPE}:\n------\n${STDOUT_LINTER}\n------"
-    info "${STDOUT_LINTER_LOG_MESSAGE}"
+    info "Command output for ${FILE_TYPE}:\n------\n${STDOUT_LINTER}\n------"
 
-    if [ ${PARALLEL_COMMAND_RETURN_CODE} -ne 0 ]; then
-      local STDOUT_LINTER_FILE_PATH
-      STDOUT_LINTER_FILE_PATH="/tmp/super-linter-parallel-stdout-${FILE_TYPE}"
-      debug "Saving stdout for ${FILE_TYPE} to ${STDOUT_LINTER_FILE_PATH} in case we need it later"
-      printf '%s\n' "${STDOUT_LINTER_LOG_MESSAGE}" >"${STDOUT_LINTER_FILE_PATH}"
-    fi
+    local STDOUT_LINTER_FILE_PATH
+    STDOUT_LINTER_FILE_PATH="${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}/super-linter-parallel-stdout-${FILE_TYPE}"
+    debug "Saving stdout for ${FILE_TYPE} to ${STDOUT_LINTER_FILE_PATH} in case we need it later"
+    printf '%s\n' "${STDOUT_LINTER}" >"${STDOUT_LINTER_FILE_PATH}"
   else
     debug "Stdout for ${FILE_TYPE} is empty"
   fi
@@ -213,15 +228,12 @@ function LintCodebase() {
   fi
 
   if [ -n "${STDERR_LINTER}" ]; then
-    local STDERR_LINTER_LOG_MESSAGE
-    STDERR_LINTER_LOG_MESSAGE="Stderr contents for ${FILE_TYPE}:\n------\n${STDERR_LINTER}\n------"
-    info "${STDERR_LINTER_LOG_MESSAGE}"
-    if [ ${PARALLEL_COMMAND_RETURN_CODE} -ne 0 ]; then
-      local STDERR_LINTER_FILE_PATH
-      STDERR_LINTER_FILE_PATH="/tmp/super-linter-parallel-stderr-${FILE_TYPE}"
-      debug "Saving stderr for ${FILE_TYPE} to ${STDERR_LINTER_FILE_PATH} in case we need it later"
-      printf '%s\n' "${STDERR_LINTER_LOG_MESSAGE}" >"${STDERR_LINTER_FILE_PATH}"
-    fi
+    info "Stderr contents for ${FILE_TYPE}:\n------\n${STDERR_LINTER}\n------"
+
+    local STDERR_LINTER_FILE_PATH
+    STDERR_LINTER_FILE_PATH="${SUPER_LINTER_PRIVATE_OUTPUT_DIRECTORY_PATH}/super-linter-parallel-stderr-${FILE_TYPE}"
+    debug "Saving stderr for ${FILE_TYPE} to ${STDERR_LINTER_FILE_PATH} in case we need it later"
+    printf '%s\n' "${STDERR_LINTER}" >"${STDERR_LINTER_FILE_PATH}"
   else
     debug "Stderr for ${FILE_TYPE} is empty"
   fi

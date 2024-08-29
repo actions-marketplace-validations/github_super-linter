@@ -1,4 +1,4 @@
-FROM node:21.7.3-bookworm
+FROM node:22.7.0-bookworm
 
 SHELL ["/bin/bash", "-o", "errexit", "-o", "nounset", "-o", "pipefail", "-c"]
 
@@ -29,4 +29,4 @@ ARG UID=1000
 ARG GID=1000
 RUN groupadd -g ${GID} -o "${USERNAME}" \
   && useradd -m -u ${UID} -g ${GID} -o -s /bin/bash -l "${USERNAME}"
-USER $UNAME
+USER $USERNAME

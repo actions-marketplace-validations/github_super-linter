@@ -7,29 +7,31 @@
 #########################################
 # Get dependency images as build stages #
 #########################################
-FROM tenable/terrascan:1.18.11 as terrascan
-FROM alpine/terragrunt:1.8.1 as terragrunt
-FROM dotenvlinter/dotenv-linter:3.3.0 as dotenv-linter
-FROM ghcr.io/terraform-linters/tflint:v0.50.3 as tflint
-FROM ghcr.io/yannh/kubeconform:v0.6.4 as kubeconfrm
-FROM golang:1.22.2-alpine as golang
-FROM golangci/golangci-lint:v1.57.2 as golangci-lint
-FROM goreleaser/goreleaser:v1.25.1 as goreleaser
-FROM hadolint/hadolint:v2.12.0-alpine as dockerfile-lint
-FROM hashicorp/terraform:1.8.1 as terraform
-FROM koalaman/shellcheck:v0.10.0 as shellcheck
-FROM mstruebing/editorconfig-checker:2.7.2 as editorconfig-checker
-FROM mvdan/shfmt:v3.8.0 as shfmt
-FROM rhysd/actionlint:1.6.27 as actionlint
-FROM scalameta/scalafmt:v3.8.1 as scalafmt
-FROM zricethezav/gitleaks:v8.18.2 as gitleaks
-FROM yoheimuta/protolint:0.49.6 as protolint
-FROM ghcr.io/clj-kondo/clj-kondo:2024.03.13-alpine as clj-kondo
-FROM dart:3.3.4-sdk as dart
-FROM mcr.microsoft.com/dotnet/sdk:8.0.204-alpine3.19 as dotnet-sdk
-FROM mcr.microsoft.com/powershell:7.4-alpine-3.17 as powershell
+FROM tenable/terrascan:1.19.2 AS terrascan
+FROM alpine/terragrunt:1.9.5 AS terragrunt
+FROM dotenvlinter/dotenv-linter:3.3.0 AS dotenv-linter
+FROM ghcr.io/terraform-linters/tflint:v0.53.0 AS tflint
+FROM ghcr.io/yannh/kubeconform:v0.6.7 AS kubeconfrm
+FROM alpine/helm:3.15.4 AS helm
+FROM golang:1.23.0-alpine AS golang
+FROM golangci/golangci-lint:v1.60.3 AS golangci-lint
+FROM goreleaser/goreleaser:v2.2.0 AS goreleaser
+FROM hadolint/hadolint:v2.12.0-alpine AS dockerfile-lint
+FROM registry.k8s.io/kustomize/kustomize:v5.4.3 AS kustomize
+FROM hashicorp/terraform:1.9.5 AS terraform
+FROM koalaman/shellcheck:v0.10.0 AS shellcheck
+FROM mstruebing/editorconfig-checker:v3.0.3 AS editorconfig-checker
+FROM mvdan/shfmt:v3.9.0 AS shfmt
+FROM rhysd/actionlint:1.7.1 AS actionlint
+FROM scalameta/scalafmt:v3.8.3 AS scalafmt
+FROM zricethezav/gitleaks:v8.18.4 AS gitleaks
+FROM yoheimuta/protolint:0.50.5 AS protolint
+FROM ghcr.io/clj-kondo/clj-kondo:2024.08.01-alpine AS clj-kondo
+FROM dart:3.5.1-sdk AS dart
+FROM mcr.microsoft.com/dotnet/sdk:8.0.401-alpine3.20 AS dotnet-sdk
+FROM mcr.microsoft.com/powershell:7.4-alpine-3.17 AS powershell
 
-FROM python:3.12.3-alpine3.19 as clang-format
+FROM python:3.12.5-alpine3.20 AS clang-format
 
 RUN apk add --no-cache \
     build-base \
@@ -56,7 +58,7 @@ RUN cmake \
     && ninja clang-format \
     && mv /tmp/llvm-project/llvm/build/bin/clang-format /usr/bin
 
-FROM python:3.12.3-alpine3.19 as python-builder
+FROM python:3.12.5-alpine3.20 AS python-builder
 
 RUN apk add --no-cache \
     bash
@@ -67,7 +69,7 @@ COPY dependencies/python/ /stage
 WORKDIR /stage
 RUN ./build-venvs.sh && rm -rfv /stage
 
-FROM python:3.12.3-alpine3.19 as npm-builder
+FROM python:3.12.5-alpine3.20 AS npm-builder
 
 RUN apk add --no-cache \
     bash \
@@ -82,12 +84,13 @@ RUN apk add --no-cache \
 COPY dependencies/package.json dependencies/package-lock.json /
 RUN apk add --no-cache --virtual .node-build-deps \
     npm \
+    && npm audit \
     && npm install --strict-peer-deps \
     && npm cache clean --force \
     && chown -R "$(id -u)":"$(id -g)" node_modules \
     && rm -rfv package.json package-lock.json
 
-FROM tflint as tflint-plugins
+FROM tflint AS tflint-plugins
 
 # Configure TFLint plugin folder
 ENV TFLINT_PLUGIN_DIR="/root/.tflint.d/plugins"
@@ -96,9 +99,9 @@ ENV TFLINT_PLUGIN_DIR="/root/.tflint.d/plugins"
 COPY TEMPLATES/.tflint.hcl /action/lib/.automation/
 
 # Initialize TFLint plugins so we get plugin versions listed when we ask for TFLint version
-RUN tflint --init -c /action/lib/.automation/.tflint.hcl
+RUN --mount=type=secret,id=GITHUB_TOKEN GITHUB_TOKEN=$(cat /run/secrets/GITHUB_TOKEN) tflint --init -c /action/lib/.automation/.tflint.hcl
 
-FROM python:3.12.3-alpine3.19 as lintr-installer
+FROM python:3.12.5-alpine3.20 AS lintr-installer
 
 RUN apk add --no-cache \
     bash \
@@ -109,13 +112,13 @@ SHELL ["/bin/bash", "-o", "errexit", "-o", "nounset", "-o", "pipefail", "-c"]
 COPY scripts/install-lintr.sh scripts/install-r-package-or-fail.R /
 RUN /install-lintr.sh && rm -rf /install-lintr.sh /install-r-package-or-fail.R
 
-FROM powershell as powershell-installer
+FROM powershell AS powershell-installer
 
 # Copy the value of the PowerShell install directory to a file so we can reuse it
 # when copying PowerShell stuff in the main image
 RUN echo "${PS_INSTALL_FOLDER}" > /tmp/PS_INSTALL_FOLDER
 
-FROM python:3.12.3-alpine3.19 as base_image
+FROM python:3.12.5-alpine3.20 AS base_image
 
 LABEL com.github.actions.name="Super-Linter" \
     com.github.actions.description="Super-linter is a ready-to-run collection of linters and code analyzers, to help validate your source code." \
@@ -156,17 +159,17 @@ RUN apk add --no-cache \
     openssh-client \
     parallel \
     perl \
-    php82 \
-    php82-ctype \
-    php82-curl \
-    php82-dom \
-    php82-iconv \
-    php82-mbstring \
-    php82-openssl \
-    php82-phar \
-    php82-simplexml \
-    php82-tokenizer \
-    php82-xmlwriter \
+    php83 \
+    php83-ctype \
+    php83-curl \
+    php83-dom \
+    php83-iconv \
+    php83-mbstring \
+    php83-openssl \
+    php83-phar \
+    php83-simplexml \
+    php83-tokenizer \
+    php83-xmlwriter \
     R \
     rakudo \
     ruby \
@@ -259,6 +262,13 @@ COPY dependencies/google-java-format /google-java-format
 RUN --mount=type=secret,id=GITHUB_TOKEN /install-google-java-format.sh \
     && rm -rfv /install-google-java-format.sh /google-java-format
 
+################
+# Install Helm #
+################
+COPY --from=helm /usr/bin/helm /usr/bin/
+
+COPY --from=kustomize /app/kustomize /usr/bin/
+
 # Copy Node tools
 COPY --from=npm-builder /node_modules /node_modules
 
@@ -334,6 +344,7 @@ COPY --from=gitleaks /usr/bin/gitleaks /usr/bin/
 # Install scalafmt #
 ####################
 COPY --from=scalafmt /bin/scalafmt /usr/bin/
+RUN scalafmt --version | awk ' { print $2 }' > /tmp/scalafmt-version.txt
 
 ######################
 # Install actionlint #
@@ -353,7 +364,7 @@ COPY --from=clj-kondo /bin/clj-kondo /usr/bin/
 ####################
 # Install dart-sdk #
 ####################
-ENV DART_SDK /usr/lib/dart
+ENV DART_SDK=/usr/lib/dart
 COPY --from=dart "${DART_SDK}" "${DART_SDK}"
 RUN chmod 755 "${DART_SDK}" && chmod 755 "${DART_SDK}/bin"
 
@@ -378,6 +389,11 @@ COPY --from=lintr-installer /usr/lib/R /usr/lib/R
 COPY --chmod=555 scripts/bash-exec.sh /usr/bin/bash-exec
 
 #########################
+# Install dotenv-linter #
+#########################
+COPY --from=dotenv-linter /dotenv-linter /usr/bin/
+
+#########################
 # Configure Environment #
 #########################
 ENV PATH="${PATH}:/venvs/ansible-lint/bin"
@@ -388,6 +404,7 @@ ENV PATH="${PATH}:/venvs/cpplint/bin"
 ENV PATH="${PATH}:/venvs/flake8/bin"
 ENV PATH="${PATH}:/venvs/isort/bin"
 ENV PATH="${PATH}:/venvs/mypy/bin"
+ENV PATH="${PATH}:/venvs/pyink/bin"
 ENV PATH="${PATH}:/venvs/pylint/bin"
 ENV PATH="${PATH}:/venvs/ruff/bin"
 ENV PATH="${PATH}:/venvs/snakefmt/bin"
@@ -399,13 +416,17 @@ ENV PATH="${PATH}:/node_modules/.bin"
 ENV PATH="${PATH}:/usr/lib/go/bin"
 ENV PATH="${PATH}:${DART_SDK}/bin:/root/.pub-cache/bin"
 
+# Renovate optionally requires re2, and will warn if its not present
+# Setting this envoronment variable disables this warning.
+ENV RENOVATE_X_IGNORE_RE2="true"
+
 # File to store linter versions
 ENV VERSION_FILE="/action/linterVersions.txt"
 RUN mkdir /action
 
 ENTRYPOINT ["/action/lib/linter.sh"]
 
-FROM base_image as slim
+FROM base_image AS slim
 
 # Run to build version file and validate image
 ENV IMAGE="slim"
@@ -417,6 +438,12 @@ RUN /linterVersions.sh \
 # Copy linter configuration files #
 ###################################
 COPY TEMPLATES /action/lib/.automation
+
+# Dynamically set scalafmt version in the scalafmt configuration file
+# Ref: https://scalameta.org/scalafmt/docs/configuration.html#version
+COPY --from=base_image /tmp/scalafmt-version.txt /tmp/scalafmt-version.txt
+RUN echo "version = $(cat /tmp/scalafmt-version.txt)" >> /action/lib/.automation/.scalafmt.conf \
+    && rm /tmp/scalafmt-version.txt
 
 #################################
 # Copy super-linter executables #
@@ -440,7 +467,7 @@ ENV BUILD_VERSION=$BUILD_VERSION
 ##############################
 # Build the standard variant #
 ##############################
-FROM base_image as standard
+FROM base_image AS standard
 
 # https://docs.docker.com/engine/reference/builder/#automatic-platform-args-in-the-global-scope
 ARG TARGETARCH
@@ -453,18 +480,11 @@ RUN apk add --no-cache \
     rust-clippy \
     rustfmt
 
-COPY scripts/clippy.sh /usr/bin/clippy
-RUN chmod +x /usr/bin/clippy
-
-#########################
-# Install dotenv-linter #
-#########################
-COPY --from=dotenv-linter /dotenv-linter /usr/bin/
-
 ###################################
 # Install DotNet and Dependencies #
 ###################################
 COPY --from=dotnet-sdk /usr/share/dotnet /usr/share/dotnet
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
 # Trigger first run experience by running arbitrary cmd
 RUN dotnet help
 
@@ -499,6 +519,12 @@ RUN /linterVersions.sh \
 # Copy linter configuration files #
 ###################################
 COPY TEMPLATES /action/lib/.automation
+
+# Dynamically set scalafmt version in the scalafmt configuration file
+# Ref: https://scalameta.org/scalafmt/docs/configuration.html#version
+COPY --from=base_image /tmp/scalafmt-version.txt /tmp/scalafmt-version.txt
+RUN echo "version = $(cat /tmp/scalafmt-version.txt)" >> /action/lib/.automation/.scalafmt.conf \
+    && rm /tmp/scalafmt-version.txt
 
 #################################
 # Copy super-linter executables #
